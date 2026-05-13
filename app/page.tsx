@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { toast, Toaster } from "sonner";
+import { supabase } from "@/lib/supabase";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type RoomState = "IDLE" | "OCCUPIED" | "WARNING" | "DANGER";
@@ -209,70 +210,131 @@ export default function Dashboard() {
     [],
   );
 
-  const fetchSensorData = useCallback(async () => {
-    try {
-      const res = await fetch("/api/sensor");
+  useEffect(() => {
+    // Initial fetch for latest + history
+    const loadInitialData = async () => {
+      try {
+        const res = await fetch("/api/sensor");
 
-      // 503 = route exists but ESP32 hasn't posted yet
-      if (res.status === 503) {
-        setFeedStatus("waiting");
-        return;
-      }
-
-      if (!res.ok) {
-        setFeedStatus("error");
-        return;
-      }
-
-      const json = await res.json();
-      // Route returns { latest: {...}, history: [...] }
-      const latest = json.latest as SensorData & { receivedAt: string };
-
-      // Normalise: use receivedAt as the timestamp the dashboard shows
-      const normalised: SensorData = {
-        state: latest.state,
-        temperature: latest.temperature,
-        humidity: latest.humidity,
-        gas: latest.gas,
-        gasBar: latest.gasBar,
-        light: latest.light,
-        isDark: latest.isDark,
-        motion: latest.motion,
-        occupied: latest.occupied,
-        motionLed: latest.motionLed,
-        roomLight: latest.roomLight,
-        buzzer: latest.buzzer,
-        timestamp: latest.receivedAt ?? new Date().toISOString(),
-      };
-
-      setFeedStatus("live");
-      setData(normalised);
-
-      // Append to local history ring-buffer (keep last 30)
-      setHistory((prev) => [...prev.slice(-29), normalised]);
-
-      // Alert on state transitions
-      setLastState((prev) => {
-        if (prev !== normalised.state) {
-          if (normalised.state === "DANGER")
-            pushAlert("⚡ DANGER — Gas or high temp detected!", "danger");
-          if (normalised.state === "WARNING")
-            pushAlert("Room conditions need attention", "warning");
-          if (normalised.state === "OCCUPIED" && prev === "IDLE")
-            pushAlert("Occupancy detected — lights on", "info");
+        if (!res.ok) {
+          setFeedStatus("error");
+          return;
         }
-        return normalised.state;
+
+        const json = await res.json();
+
+        const formattedHistory: SensorData[] = (json.history || []).map(
+          (row: any) => ({
+            state: row.state,
+            temperature: row.temperature,
+            humidity: row.humidity,
+            gas: row.gas,
+            gasBar: row.gas_bar,
+            light: row.light,
+            isDark: row.is_dark,
+            motion: row.motion,
+            occupied: row.occupied,
+            motionLed: row.motion_led,
+            roomLight: row.room_light,
+            buzzer: row.buzzer,
+            timestamp: row.created_at,
+          }),
+        );
+
+        if (formattedHistory.length > 0) {
+          setHistory(formattedHistory);
+
+          setData(formattedHistory[formattedHistory.length - 1]);
+
+          setFeedStatus("live");
+        }
+      } catch (err) {
+        console.error(err);
+        setFeedStatus("error");
+      }
+    };
+
+    loadInitialData();
+
+    // Realtime subscription
+    const channel = supabase
+      .channel("sensor-realtime")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "sensor_data",
+        },
+        (payload) => {
+          const row = payload.new;
+
+          const normalised: SensorData = {
+            state: row.state,
+            temperature: row.temperature,
+            humidity: row.humidity,
+            gas: row.gas,
+            gasBar: row.gas_bar,
+            light: row.light,
+            isDark: row.is_dark,
+            motion: row.motion,
+            occupied: row.occupied,
+            motionLed: row.motion_led,
+            roomLight: row.room_light,
+            buzzer: row.buzzer,
+            timestamp: row.created_at,
+          };
+
+          setFeedStatus("live");
+
+          setData(normalised);
+
+          setHistory((prev) => [...prev.slice(-29), normalised]);
+
+          // Alerts
+          setLastState((prev) => {
+            if (prev !== normalised.state) {
+              if (normalised.state === "DANGER") {
+                pushAlert("⚡ DANGER — Gas or high temp detected!", "danger");
+              }
+
+              if (normalised.state === "WARNING") {
+                pushAlert("Room conditions need attention", "warning");
+              }
+
+              if (normalised.state === "OCCUPIED" && prev === "IDLE") {
+                pushAlert("Occupancy detected — lights on", "info");
+              }
+            }
+
+            return normalised.state;
+          });
+        },
+      )
+      .subscribe((status) => {
+        console.log("Realtime:", status);
       });
-    } catch {
-      setFeedStatus("error");
-    }
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [pushAlert]);
 
   useEffect(() => {
-    fetchSensorData();
-    const id = setInterval(fetchSensorData, 2000);
-    return () => clearInterval(id);
-  }, [fetchSensorData]);
+    const interval = setInterval(() => {
+      if (!data) return;
+
+      const lastSeen = new Date(data.timestamp).getTime();
+
+      const isOffline = Date.now() - lastSeen > 10000;
+
+      if (isOffline) {
+        setFeedStatus("waiting");
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [data]);
 
   // ── Render guards ──
   if (feedStatus === "waiting" || !data) return <WaitingBanner />;

@@ -1,29 +1,56 @@
-// app/api/sensor/route.ts
-// ESP32 POSTs JSON here every 2 seconds
-// Dashboard GETs the latest reading
-
 import { NextRequest, NextResponse } from "next/server";
-
-// In-memory store (swap for a DB like Supabase/Postgres in production)
-let latestData: Record<string, unknown> | null = null;
-const history: Record<string, unknown>[] = [];
+import { supabase } from "@/lib/supabase";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const entry = { ...body, receivedAt: new Date().toISOString() };
-    latestData = entry;
-    history.push(entry);
-    if (history.length > 100) history.shift(); // keep last 100
-    return NextResponse.json({ ok: true });
-  } catch {
+
+    const { error } = await supabase.from("sensor_data").insert({
+      state: body.state,
+      temperature: body.temperature,
+      humidity: body.humidity,
+      gas: body.gas,
+      gas_bar: body.gasBar,
+      light: body.light,
+      is_dark: body.isDark,
+      motion: body.motion,
+      occupied: body.occupied,
+      motion_led: body.motionLed,
+      room_light: body.roomLight,
+      buzzer: body.buzzer,
+    });
+
+    if (error) {
+      console.error(error);
+
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+    });
+  } catch (err) {
+    console.error(err);
+
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 }
 
 export async function GET() {
-  if (!latestData) {
-    return NextResponse.json({ error: "No data yet" }, { status: 503 });
+  const { data, error } = await supabase
+    .from("sensor_data")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (error) {
+    console.error(error);
+
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  return NextResponse.json({ latest: latestData, history: history.slice(-30) });
+
+  return NextResponse.json({
+    latest: data?.[0] ?? null,
+    history: data ?? [],
+  });
 }
