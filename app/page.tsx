@@ -370,7 +370,7 @@ export default function Dashboard() {
               <span
                 className={`font-display text-4xl leading-none ${data.temperature > 35 ? "text-rose-500" : data.temperature > 28 ? "text-amber-500" : "text-slate-700"}`}
               >
-                {data.temperature}
+                {data.temperature.toFixed(2)}
               </span>
               <span className="text-slate-400 text-sm mb-1">°C</span>
             </div>
@@ -416,7 +416,7 @@ export default function Dashboard() {
                 <div
                   className="h-2 rounded-full transition-all duration-700"
                   style={{
-                    width: `${data.humidity}%`,
+                    width: `${data.humidity.toFixed(2)}%`,
                     background: data.humidity > 80 ? "#3b82f6" : "#7c9e87",
                   }}
                 />
