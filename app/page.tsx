@@ -336,6 +336,14 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [data]);
 
+  useEffect(() => {
+    if (!data) return;
+
+    console.log("timestamp:", data.timestamp);
+    console.log("parsed:", new Date(data.timestamp));
+    console.log("diff:", Date.now() - new Date(data.timestamp).getTime());
+  }, [data]);
+
   // ── Render guards ──
   if (feedStatus === "waiting" || !data) return <WaitingBanner />;
 
